@@ -5,6 +5,7 @@
 // SPDX-FileCopyrightText: 2014 Benjamin Sago
 // SPDX-License-Identifier: MIT
 use std::ffi::OsString;
+use std::collections::HashSet;
 
 use crate::fs::feature::xattr;
 use crate::options::parser::MatchedFlags;
@@ -14,7 +15,7 @@ use crate::output::file_name::Options as FileStyle;
 use crate::output::grid_details::{self, RowThreshold};
 use crate::output::table::{
     Columns, FlagsFormat, GroupFormat, Options as TableOptions, SizeFormat, TimeTypes, UserFormat,
-    DEFAULT_COLUMN_ORDER,
+    DEFAULT_COLUMN_ORDER, Column, TimeType,
 };
 use crate::output::time::TimeFormat;
 use crate::output::{details, grid, Mode, TerminalWidth, View};
@@ -295,6 +296,12 @@ impl Columns {
         let filesize = !matches.has(&flags::NO_FILESIZE)?;
         let user = !matches.has(&flags::NO_USER)?;
 
+        let preferred_order = if let Some(columns_arg) = matches.get(&flags::COLUMNS)? {
+            parse_column_order(&columns_arg.to_string_lossy())?
+        } else {
+            DEFAULT_COLUMN_ORDER.to_vec()
+        };
+
         Ok(Self {
             time_types,
             inode,
@@ -310,7 +317,7 @@ impl Columns {
             permissions,
             filesize,
             user,
-            preferred_order: DEFAULT_COLUMN_ORDER.to_vec(),
+            preferred_order,
         })
     }
 }
@@ -528,6 +535,73 @@ impl ColorScaleOptions {
 
         Ok(options)
     }
+}
+
+/// Parse a semicolon-separated list of column names into a Vec<Column>
+/// Supports abbreviations and a "*" wildcard for "all other columns"
+fn parse_column_order(input: &str) -> Result<Vec<Column>, OptionsError> {
+    let mut columns = Vec::new();
+    let mut others_position = None;
+
+    for (i, part) in input.split(';').enumerate() {
+        match part.trim() {
+            "*" => {
+                others_position = Some(i);
+                columns.push(Column::Permissions); // Placeholder, will be replaced
+            },
+            "s" | "size" => columns.push(Column::FileSize),
+            "d" | "date" | "modified" => columns.push(Column::Timestamp(TimeType::Modified)),
+            "da" | "date-accessed" | "accessed" => columns.push(Column::Timestamp(TimeType::Accessed)),
+            "dc" | "date-created" | "created" => columns.push(Column::Timestamp(TimeType::Created)),
+            "dch" | "date-changed" | "changed" => columns.push(Column::Timestamp(TimeType::Changed)),
+            "p" | "permissions" => columns.push(Column::Permissions),
+            #[cfg(unix)]
+            "u" | "user" => columns.push(Column::User),
+            #[cfg(unix)]
+            "g" | "group" => columns.push(Column::Group),
+            #[cfg(unix)]
+            "i" | "inode" => columns.push(Column::Inode),
+            #[cfg(unix)]
+            "o" | "octal" => columns.push(Column::Octal),
+            #[cfg(unix)]
+            "l" | "links" => columns.push(Column::HardLinks),
+            #[cfg(unix)]
+            "b" | "blocksize" => columns.push(Column::Blocksize),
+            #[cfg(unix)]
+            "sc" | "security-context" => columns.push(Column::SecurityContext),
+            "git" => columns.push(Column::GitStatus),
+            "git-repo" => columns.push(Column::SubdirGitRepo(true)),
+            "git-repo-no-stat" => columns.push(Column::SubdirGitRepo(false)),
+            "flags" | "f" => columns.push(Column::FileFlags),
+            "" => {}, // Skip empty parts (e.g., trailing semicolons)
+            unknown => {
+                return Err(OptionsError::BadArgument(&flags::COLUMNS, 
+                    format!("Unknown column name: '{}'", unknown).into()));
+            }
+        }
+    }
+
+    // Handle "*" (others) placeholder
+    if let Some(pos) = others_position {
+        // Remove the placeholder first
+        columns.remove(pos);
+
+        // Collect all explicitly specified columns (excluding the placeholder)
+        let specified: HashSet<_> = columns.iter().copied().collect();
+
+        // Find columns from default order that weren't explicitly specified
+        let others: Vec<_> = DEFAULT_COLUMN_ORDER.iter()
+            .filter(|&col| !specified.contains(col))
+            .copied()
+            .collect();
+
+        // Insert the "others" columns at the placeholder position
+        for (i, col) in others.into_iter().enumerate() {
+            columns.insert(pos + i, col);
+        }
+    }
+
+    Ok(columns)
 }
 
 #[cfg(test)]
