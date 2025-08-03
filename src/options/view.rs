@@ -14,6 +14,7 @@ use crate::output::file_name::Options as FileStyle;
 use crate::output::grid_details::{self, RowThreshold};
 use crate::output::table::{
     Columns, FlagsFormat, GroupFormat, Options as TableOptions, SizeFormat, TimeTypes, UserFormat,
+    DEFAULT_COLUMN_ORDER,
 };
 use crate::output::time::TimeFormat;
 use crate::output::{details, grid, Mode, TerminalWidth, View};
@@ -309,6 +310,7 @@ impl Columns {
             permissions,
             filesize,
             user,
+            preferred_order: DEFAULT_COLUMN_ORDER.to_vec(),
         })
     }
 }

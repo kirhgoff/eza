@@ -30,6 +30,34 @@ use crate::theme::Theme;
 
 use super::color_scale::ColorScaleMode;
 
+/// Default column order that matches the original hardcoded sequence
+pub const DEFAULT_COLUMN_ORDER: &[Column] = &[
+    #[cfg(unix)]
+    Column::Inode,
+    #[cfg(unix)]
+    Column::Octal,
+    Column::Permissions,
+    #[cfg(unix)]
+    Column::HardLinks,
+    Column::FileSize,
+    #[cfg(unix)]
+    Column::Blocksize,
+    #[cfg(unix)]
+    Column::User,
+    #[cfg(unix)]
+    Column::Group,
+    Column::FileFlags,
+    #[cfg(target_os = "linux")]
+    Column::SecurityContext,
+    Column::Timestamp(TimeType::Modified),
+    Column::Timestamp(TimeType::Changed),
+    Column::Timestamp(TimeType::Created),
+    Column::Timestamp(TimeType::Accessed),
+    Column::GitStatus,
+    Column::SubdirGitRepo(true),
+    Column::SubdirGitRepo(false),
+];
+
 /// Options for displaying a table.
 #[derive(PartialEq, Eq, Debug)]
 pub struct Options {
@@ -43,11 +71,12 @@ pub struct Options {
 
 /// Extra columns to display in the table.
 #[allow(clippy::struct_excessive_bools)]
-#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub struct Columns {
     /// At least one of these timestamps will be shown.
     pub time_types: TimeTypes,
 
+    // TODO: those are the flags that define which columns are shown.
     // The rest are just on/off
     pub inode: bool,
     pub links: bool,
@@ -64,6 +93,10 @@ pub struct Columns {
     pub permissions: bool,
     pub filesize: bool,
     pub user: bool,
+
+    /// The preferred order of columns. This determines the sequence
+    /// in which columns are displayed when enabled.
+    pub preferred_order: Vec<Column>,
 }
 
 impl Columns {
@@ -71,79 +104,38 @@ impl Columns {
     pub fn collect(&self, actually_enable_git: bool, git_repos: bool) -> Vec<Column> {
         let mut columns = Vec::with_capacity(4);
 
-        if self.inode {
-            #[cfg(unix)]
-            columns.push(Column::Inode);
-        }
+        // Loop through preferred order and check if each column is enabled
+        for &column in &self.preferred_order {
+            let should_include = match column {
+                #[cfg(unix)]
+                Column::Inode => self.inode,
+                #[cfg(unix)]
+                Column::Octal => self.octal,
+                Column::Permissions => self.permissions,
+                #[cfg(unix)]
+                Column::HardLinks => self.links,
+                Column::FileSize => self.filesize,
+                #[cfg(unix)]
+                Column::Blocksize => self.blocksize,
+                #[cfg(unix)]
+                Column::User => self.user,
+                #[cfg(unix)]
+                Column::Group => self.group,
+                Column::FileFlags => self.file_flags,
+                #[cfg(target_os = "linux")]
+                Column::SecurityContext => self.security_context,
+                Column::Timestamp(TimeType::Modified) => self.time_types.modified,
+                Column::Timestamp(TimeType::Changed) => self.time_types.changed,
+                Column::Timestamp(TimeType::Created) => self.time_types.created,
+                Column::Timestamp(TimeType::Accessed) => self.time_types.accessed,
+                Column::GitStatus => self.git && actually_enable_git,
+                Column::SubdirGitRepo(true) => self.subdir_git_repos && git_repos,
+                Column::SubdirGitRepo(false) => self.subdir_git_repos_no_stat && git_repos,
+            };
 
-        if self.octal {
-            #[cfg(unix)]
-            columns.push(Column::Octal);
-        }
-
-        if self.permissions {
-            columns.push(Column::Permissions);
-        }
-
-        if self.links {
-            #[cfg(unix)]
-            columns.push(Column::HardLinks);
-        }
-
-        if self.filesize {
-            columns.push(Column::FileSize);
-        }
-
-        if self.blocksize {
-            #[cfg(unix)]
-            columns.push(Column::Blocksize);
-        }
-
-        if self.user {
-            #[cfg(unix)]
-            columns.push(Column::User);
-        }
-
-        if self.group {
-            #[cfg(unix)]
-            columns.push(Column::Group);
-        }
-
-        if self.file_flags {
-            columns.push(Column::FileFlags);
-        }
-
-        #[cfg(target_os = "linux")]
-        if self.security_context {
-            columns.push(Column::SecurityContext);
-        }
-
-        if self.time_types.modified {
-            columns.push(Column::Timestamp(TimeType::Modified));
-        }
-
-        if self.time_types.changed {
-            columns.push(Column::Timestamp(TimeType::Changed));
-        }
-
-        if self.time_types.created {
-            columns.push(Column::Timestamp(TimeType::Created));
-        }
-
-        if self.time_types.accessed {
-            columns.push(Column::Timestamp(TimeType::Accessed));
-        }
-
-        if self.git && actually_enable_git {
-            columns.push(Column::GitStatus);
-        }
-
-        if self.subdir_git_repos && git_repos {
-            columns.push(Column::SubdirGitRepo(true));
-        }
-
-        if self.subdir_git_repos_no_stat && git_repos {
-            columns.push(Column::SubdirGitRepo(false));
+            if should_include {
+                columns.push(column);
+            }
         }
 
         columns
@@ -151,7 +143,7 @@ impl Columns {
 }
 
 /// A table contains these.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Column {
     Permissions,
     FileSize,
